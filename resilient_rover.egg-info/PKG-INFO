@@ -1,0 +1,7 @@
+Metadata-Version: 2.4
+Name: resilient-rover
+Version: 0.1.0
+Summary: A custom Gymnasium reinforcement learning environment for resilient rover decision-making.
+Requires-Python: >=3.12
+Requires-Dist: gymnasium
+Requires-Dist: numpy
