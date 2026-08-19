@@ -6,7 +6,7 @@ Resilient Rover is a custom reinforcement learning environment built with Python
 
 The initial goal is to create a simple, understandable environment for learning how reinforcement learning systems interact with state, observations, actions, rewards, episode termination, and evaluation.
 
-The project will begin with a small deterministic rover-navigation problem and gradually introduce additional complexity such as resource constraints, stochastic failures, communication issues, delayed observations, and changing objectives.
+The project will begin with a **one-dimensional deterministic rover-navigation problem** so that the full state space, Q-values, and learned policy can be inspected and understood directly. Later versions will introduce two-dimensional navigation, resource management, stochastic failures, communication issues, delayed observations, and changing objectives.
 
 The environment should remain simple enough at each stage that unexpected agent behavior can be inspected and understood.
 
@@ -25,17 +25,21 @@ The first version of the environment should provide hands-on experience with:
 * distinguishing episode termination from truncation
 * validating environment behavior before training
 * establishing baseline agent performance
-* training and evaluating a simple Q-learning agent
+* implementing Q-learning
+* inspecting how reward propagates backward through Q-values
+* understanding epsilon-greedy exploration
+* understanding learning rate and discount factor
+* evaluating a learned policy against a baseline
 
-The first version should prioritize clarity over realism.
+The first version should prioritize **clarity and inspectability over realism**.
 
 ---
 
-# 3. Resilient Rover v0
+# 3. Resilient Rover v0 — One-Dimensional Learning Environment
 
 ## 3.1 Environment Objective
 
-The rover's objective is to navigate from an initial position to a target position before exhausting its available battery.
+The rover's objective is to navigate from an initial location to a target location before exhausting its available battery.
 
 A successful episode occurs when the rover reaches the target.
 
@@ -47,22 +51,20 @@ An episode may also be truncated if the rover exceeds a configured maximum numbe
 
 ## 3.2 World Representation
 
-Resilient Rover v0 will use a small two-dimensional grid.
+Resilient Rover v0 will use a one-dimensional sequence of discrete locations.
 
-Initial proposed size:
+Initial proposed world:
 
 ```text
-5 × 5
+0 -- 1 -- 2 -- 3 -- 4 -- 5 -- 6 -- 7 -- 8 -- 9
 ```
 
-Example:
+A possible episode might begin as:
 
 ```text
-. . . . .
-. . . T .
-. . . . .
-. R . . .
-. . . . .
+0 -- 1 -- R -- 3 -- 4 -- 5 -- 6 -- 7 -- T -- 9
+          ↑                         ↑
+        rover                     target
 ```
 
 Where:
@@ -70,24 +72,25 @@ Where:
 ```text
 R = Rover
 T = Target
-. = Empty cell
 ```
 
-The rover and target will occupy valid positions within the grid.
+The rover and target must occupy valid locations within the world.
 
 The target should not initially occupy the same location as the rover.
 
 The initial rover and target locations may be randomized during `reset()`.
 
+The small one-dimensional world is intentional. It allows the learned values for every state and action to be inspected directly before adding more complex spatial behavior.
+
 ---
 
 # 4. Internal State
 
-The environment will initially maintain the following internal state:
+The environment will initially maintain:
 
 ```text
-rover position
-target position
+rover location
+target location
 battery level
 current step count
 ```
@@ -97,7 +100,7 @@ Possible internal representation:
 ```python
 self._rover_location
 self._target_location
-self._battery
+self._battery_level
 self._step_count
 ```
 
@@ -107,37 +110,37 @@ Additional internal state may be introduced in later versions.
 
 # 5. Observation Space
 
-The agent should initially be able to observe:
+The agent should initially observe:
 
 ```text
-rover position
-target position
+rover location
+target location
 battery level
 ```
 
-A possible Gymnasium observation structure is:
+A possible observation structure is:
 
 ```python
 {
-    "rover": [x, y],
-    "target": [x, y],
-    "battery": battery_level
+    "rover": rover_location,
+    "target": target_location,
+    "battery": battery_level,
 }
 ```
 
-The exact Gymnasium spaces will be determined during implementation.
+Because each location is a single integer rather than a coordinate pair, the observation space can remain simple.
 
 Possible representations include:
 
 ```text
-rover position:
-Box or MultiDiscrete
+rover location:
+Discrete(world_size)
 
-target position:
-Box or MultiDiscrete
+target location:
+Discrete(world_size)
 
 battery:
-Discrete or Box
+Discrete(max_battery + 1)
 ```
 
 The initial environment will provide complete state information to the agent.
@@ -154,58 +157,63 @@ Partial observability will be introduced only in later versions.
 
 # 6. Action Space
 
-Resilient Rover v0 will use a discrete action space.
-
-Initial actions:
+Resilient Rover v0 will use three discrete actions:
 
 ```text
-0 = move right
-1 = move up
+0 = wait
+1 = move right
 2 = move left
-3 = move down
-4 = wait
 ```
 
 Possible Gymnasium declaration:
 
 ```python
-self.action_space = gym.spaces.Discrete(5)
+self.action_space = gym.spaces.Discrete(3)
 ```
 
-Movement actions will modify the rover's position by one grid cell.
+Movement actions change the rover's location by one position.
 
-The rover must remain inside the grid boundaries.
+For example:
 
-Attempts to move outside the grid should leave the rover in its current position.
+```text
+WAIT  → no location change
+RIGHT → location + 1
+LEFT  → location - 1
+```
 
-The behavior of the `WAIT` action should initially leave the rover's position unchanged.
+The rover must remain inside the valid range:
+
+```text
+0 through world_size - 1
+```
+
+Attempts to move beyond either boundary should leave the rover in its current location.
 
 ---
 
 # 7. Battery Model
 
-The rover will have a finite battery.
+The rover will have a finite battery level.
 
 Initial proposed behavior:
 
 ```text
-movement action → battery decreases by 1
-WAIT action     → battery decreases by 1
+MOVE RIGHT → battery level decreases by 1
+MOVE LEFT  → battery level decreases by 1
+WAIT       → battery level decreases by 1
 ```
 
-This keeps the initial resource model simple.
+This keeps the initial resource model deliberately simple.
 
-Initial battery capacity should be large enough that successful episodes are possible from all valid starting positions.
-
-A possible starting value is:
+A possible initial battery capacity is:
 
 ```text
-battery = 20
+battery_level = 20
 ```
 
-The exact value should be treated as a tunable environment parameter.
+The value should be large enough that successful navigation is possible from all valid starting states.
 
-Battery behavior can become more realistic in later versions.
+Battery capacity should be treated as a configurable environment parameter.
 
 ---
 
@@ -220,9 +228,9 @@ env.step(action)
 the environment should:
 
 1. Interpret the selected action.
-2. Determine the proposed rover movement.
-3. Prevent movement outside the grid.
-4. Update the rover position.
+2. Determine the proposed new rover location.
+3. Prevent movement beyond the world boundaries.
+4. Update the rover location.
 5. Reduce the battery level.
 6. Increment the step count.
 7. Determine whether the target has been reached.
@@ -237,11 +245,11 @@ Conceptually:
 ```text
 current state
      ↓
-agent chooses action
+agent chooses LEFT / RIGHT / WAIT
      ↓
 environment applies action
      ↓
-environment updates state
+environment updates location and battery level
      ↓
 environment calculates reward
      ↓
@@ -264,11 +272,11 @@ Proposed v0 reward structure:
 -1      every other timestep
 ```
 
-The step penalty provides an incentive for the rover to reach the target efficiently rather than wander indefinitely.
+The step penalty encourages the rover to reach the target efficiently.
 
-This reward function should be treated as an initial hypothesis rather than a final design.
+This reward structure is an initial hypothesis rather than a final design.
 
-Unexpected behavior should be documented rather than immediately hidden by changing reward values.
+Unexpected behavior should be recorded and investigated rather than immediately hidden by changing the reward values.
 
 ---
 
@@ -304,12 +312,12 @@ terminated = False
 
 # 11. Episode Truncation
 
-An episode is **truncated** when it is stopped for an external constraint rather than because the environment reached a natural terminal state.
+An episode is **truncated** when it is stopped because of an external limit rather than because the rover naturally succeeded or failed.
 
 For example:
 
 ```text
-maximum episode length = 100 steps
+maximum episode length = 50 steps
 ```
 
 If the rover has not reached the target or exhausted its battery after the maximum number of steps:
@@ -324,22 +332,22 @@ This prevents unexpectedly long episodes during testing and training.
 
 # 12. Information Returned by the Environment
 
-The `info` dictionary may initially provide debugging and evaluation information that is not necessary for the agent's policy.
+The `info` dictionary may provide debugging and evaluation information that is not necessary for the agent's policy.
 
 Possible values:
 
 ```python
 {
     "distance_to_target": ...,
-    "battery_remaining": ...,
-    "steps": ...
+    "battery_level": ...,
+    "steps": ...,
 }
 ```
 
-For distance, Manhattan distance may be useful:
+In the one-dimensional world, distance can simply be:
 
 ```text
-|x_rover - x_target| + |y_rover - y_target|
+abs(rover_location - target_location)
 ```
 
 This information can later support evaluation and debugging.
@@ -358,8 +366,8 @@ should:
 
 1. reset the step counter
 2. restore the battery
-3. select a rover starting position
-4. select a different target position
+3. select a rover starting location
+4. select a different target location
 5. return the initial observation
 6. return the initial `info` dictionary
 
@@ -381,9 +389,11 @@ Before training an RL agent, the environment should be validated independently.
 
 Manual tests should include:
 
-* moving in all four directions
-* movement at each grid boundary
+* moving left
+* moving right
 * waiting
+* attempting to move left at location `0`
+* attempting to move right at the maximum location
 * reaching the target
 * exhausting the battery
 * episode truncation
@@ -404,8 +414,6 @@ check_env(env)
 
 # 15. Automated Tests
 
-The project should include automated unit tests for core environment behavior.
-
 Initial planned tests:
 
 ```text
@@ -413,9 +421,8 @@ test_reset_returns_valid_observation
 test_rover_and_target_do_not_start_together
 test_move_right
 test_move_left
-test_move_up
-test_move_down
-test_rover_cannot_leave_grid
+test_rover_cannot_move_below_zero
+test_rover_cannot_move_above_world_limit
 test_action_reduces_battery
 test_wait_reduces_battery
 test_goal_terminates_episode
@@ -432,11 +439,11 @@ The learning algorithm should not be introduced until the environment passes its
 
 ---
 
-# 16. Baseline Evaluation
+# 16. Random-Agent Baseline
 
 Before training a Q-learning agent, a random-action agent should be evaluated.
 
-The random agent will choose:
+The agent will choose:
 
 ```python
 action = env.action_space.sample()
@@ -451,7 +458,7 @@ success rate
 failure rate
 average episode reward
 average episode length
-average remaining battery on success
+average remaining battery level on success
 ```
 
 These results will provide a baseline against which trained agents can later be compared.
@@ -462,7 +469,7 @@ These results will provide a baseline against which trained agents can later be 
 
 Once the environment is validated, a simple Q-learning agent will be implemented.
 
-The first agent should include:
+The agent should include:
 
 ```text
 Q-table
@@ -473,15 +480,87 @@ discount factor
 Q-value updates
 ```
 
-The purpose of this phase is to understand reinforcement learning mechanics directly rather than relying immediately on a prebuilt deep-RL framework.
+The one-dimensional environment should make it possible to inspect the learned values directly.
 
-The trained policy should be compared against the random-agent baseline.
+For example:
+
+```text
+Location 0:
+LEFT  = ...
+RIGHT = ...
+WAIT  = ...
+
+Location 1:
+LEFT  = ...
+RIGHT = ...
+WAIT  = ...
+```
+
+This should make it easier to observe how rewards propagate backward through earlier state-action pairs.
+
+The trained policy should then be compared against the random-agent baseline.
 
 ---
 
-# 18. Planned Future Versions
+# 18. Policy Inspection
 
-## v1 — Battery and Charging
+After training, the learned policy should be inspected rather than judged solely by cumulative reward.
+
+Questions should include:
+
+* Does the rover generally move toward the target?
+* Does it learn that actions at boundaries may be unproductive?
+* Does `WAIT` acquire meaningful value?
+* How does behavior change as the battery level decreases?
+* Do states closer to the target receive higher Q-values?
+* Can reward propagation through the Q-table be observed directly?
+* Are there states the agent has rarely visited?
+
+A simple policy report might look like:
+
+```text
+Rover   Target   Battery   Preferred Action
+0       8        15        RIGHT
+1       8        14        RIGHT
+2       8        13        RIGHT
+...
+```
+
+---
+
+# 19. Resilient Rover v1 — Two-Dimensional Navigation
+
+Once the one-dimensional environment and Q-learning agent are understood, the rover will move to a two-dimensional grid.
+
+Possible initial grid:
+
+```text
+5 × 5
+```
+
+The observation will then include:
+
+```text
+rover [x, y]
+target [x, y]
+battery_level
+```
+
+The action space will expand to:
+
+```text
+UP
+DOWN
+LEFT
+RIGHT
+WAIT
+```
+
+This phase introduces spatial decision-making while retaining the same fundamental RL concepts learned in v0.
+
+---
+
+# 20. Resilient Rover v2 — Battery and Charging
 
 Possible additions:
 
@@ -496,7 +575,7 @@ The rover may need to decide whether continuing toward the target or detouring t
 
 ---
 
-## v2 — Communication Failures
+# 21. Resilient Rover v3 — Communication Failures
 
 Possible additions:
 
@@ -518,7 +597,7 @@ This introduces stochastic state transitions.
 
 ---
 
-## v3 — Imperfect Observations
+# 22. Resilient Rover v4 — Imperfect Observations
 
 Possible additions:
 
@@ -526,7 +605,7 @@ Possible additions:
 delayed telemetry
 missing telemetry
 sensor uncertainty
-stale position information
+stale location information
 ```
 
 At this point:
@@ -539,7 +618,7 @@ The rover will have to act without perfect knowledge of the world.
 
 ---
 
-## v4 — Mission Interruptions
+# 23. Resilient Rover v5 — Mission Interruptions
 
 The rover's objective may change during an episode.
 
@@ -557,13 +636,13 @@ This phase will explore how learned policies behave when objectives change durin
 
 ---
 
-## v5 — Evaluation Suite
+# 24. Evaluation Suite
 
 A structured evaluation suite may introduce controlled scenarios such as:
 
 ```text
 baseline operation
-low starting battery
+low starting battery level
 intermittent communication
 delayed telemetry
 sensor failure
@@ -578,13 +657,13 @@ Possible metrics:
 task success rate
 episode duration
 energy use
-unsafe or invalid actions
+invalid actions
 recovery success
 ```
 
 ---
 
-# 19. Deep Reinforcement Learning
+# 25. Deep Reinforcement Learning
 
 Deep reinforcement learning should not be introduced until the simpler Q-learning implementation is understood and the environment complexity justifies a larger state representation.
 
@@ -601,7 +680,7 @@ The purpose of this progression is to understand why more advanced techniques be
 
 ---
 
-# 20. Experiment Log
+# 26. Experiment Log
 
 Unexpected behavior should be recorded in:
 
@@ -646,7 +725,7 @@ The goal is to understand how environment design, reward structure, and learning
 
 ---
 
-# 21. Design Principle
+# 27. Design Principle
 
 Resilient Rover should evolve incrementally.
 
@@ -667,9 +746,11 @@ train
   ↓
 evaluate
   ↓
+inspect learned behavior
+  ↓
 analyze unexpected behavior
   ↓
 add one new complexity
 ```
 
-This should make it easier to identify why agent behavior changes as the environment becomes more difficult.
+Resilient Rover v0 is intentionally simple. Its purpose is not to model a realistic rover, but to make reinforcement learning behavior visible and understandable before more realistic complexity is introduced.
