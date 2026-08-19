@@ -1,9 +1,15 @@
+import pytest
+
 from resilient_rover.envs.line_world_env import LineWorldEnv
 
 
-def test_reset_returns_valid_observation():
-    env = LineWorldEnv()
+@pytest.fixture
+def env():
+    environment = LineWorldEnv()
+    environment.reset(seed=42)
+    return environment
 
+def test_reset_returns_valid_observation(env):
     observation, info = env.reset(seed=42)
 
     assert 0 <= observation["rover"] < env.size
@@ -12,10 +18,7 @@ def test_reset_returns_valid_observation():
     assert observation["battery"] == env.max_battery
     assert info["step_count"] == 0
 
-def test_wait_action():
-    env = LineWorldEnv()
-    env.reset(seed=42)
-
+def test_wait_action(env):
     env._rover_location = 4
     env._target_location = 8
     env._battery_level = 20
@@ -30,10 +33,7 @@ def test_wait_action():
     assert terminated is False
     assert truncated is False
 
-def test_move_right():
-    env = LineWorldEnv()
-    env.reset(seed=42)
-
+def test_move_right(env):
     env._rover_location = 4
     env._target_location = 8
     env._battery_level = 20
@@ -48,10 +48,7 @@ def test_move_right():
     assert terminated is False
     assert truncated is False
 
-def test_move_left():
-    env = LineWorldEnv()
-    env.reset(seed=42)
-
+def test_move_left(env):
     env._rover_location = 4
     env._target_location = 8
     env._battery_level = 20
@@ -66,10 +63,7 @@ def test_move_left():
     assert terminated is False
     assert truncated is False
 
-def test_rover_cannot_move_below_zero():
-    env = LineWorldEnv()
-    env.reset(seed=42)
-
+def test_rover_cannot_move_below_zero(env):
     env._rover_location = 0
     env._target_location = 8
     env._battery_level = 20
@@ -84,10 +78,7 @@ def test_rover_cannot_move_below_zero():
     assert terminated is False
     assert truncated is False
 
-def test_rover_cannot_move_above_world_limit():
-    env = LineWorldEnv()
-    env.reset(seed=42)
-
+def test_rover_cannot_move_above_world_limit(env):
     env._rover_location = env.size - 1
     env._target_location = 4
     env._battery_level = 20
@@ -102,10 +93,7 @@ def test_rover_cannot_move_above_world_limit():
     assert terminated is False
     assert truncated is False
 
-def test_reaching_target_terminates_episode():
-    env = LineWorldEnv()
-    env.reset(seed=42)
-
+def test_reaching_target_terminates_episode(env):
     env._rover_location = 3
     env._target_location = 4
     env._battery_level = 20
@@ -120,10 +108,7 @@ def test_reaching_target_terminates_episode():
     assert terminated is True
     assert truncated is False
 
-def test_rover_battery_depleted_termination():
-    env = LineWorldEnv()
-    env.reset(seed=42)
-
+def test_rover_battery_depleted_termination(env):
     env._rover_location = 4
     env._target_location = 8
     env._battery_level = 1
@@ -138,10 +123,7 @@ def test_rover_battery_depleted_termination():
     assert terminated is True
     assert truncated is False
 
-def test_max_steps_reached_truncation():
-    env = LineWorldEnv()
-    env.reset(seed=42)
-
+def test_max_steps_reached_truncation(env):
     env._rover_location = 4
     env._target_location = 8
     env._battery_level = 20
@@ -156,10 +138,7 @@ def test_max_steps_reached_truncation():
     assert terminated is False
     assert truncated is True
 
-def test_reaching_target_on_final_battery_unit_succeeds():
-    env = LineWorldEnv()
-    env.reset(seed=42)
-
+def test_reaching_target_on_final_battery_unit_succeeds(env):
     env._rover_location = 7
     env._target_location = 8
     env._battery_level = 1
@@ -174,9 +153,7 @@ def test_reaching_target_on_final_battery_unit_succeeds():
     assert terminated is True
     assert truncated is False
 
-def test_seeded_reset_reproducibility():
-    env = LineWorldEnv()
-
+def test_seeded_reset_reproducibility(env):
     obs1, info1 = env.reset(seed=42)
     obs2, info2 = env.reset(seed=42)
 
